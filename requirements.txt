@@ -6,3 +6,4 @@ pyyaml
 tqdm
 sentence-transformers
 torch
+streamlit
