@@ -1,0 +1,6 @@
+python-terrier
+ir-datasets
+pandas
+numpy
+pyyaml
+tqdm

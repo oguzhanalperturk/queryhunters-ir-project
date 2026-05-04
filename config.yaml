@@ -1,0 +1,13 @@
+dataset:
+  name: "msmarco-passage/dev"
+  index_path: "indexes/msmarco_passage"
+  max_dev_queries: 500
+
+retrieval:
+  bm25_num_results: 100
+
+evaluation:
+  metrics:
+    - "recip_rank"
+    - "ndcg_cut_10"
+    - "recall_100"
