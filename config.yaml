@@ -11,3 +11,9 @@ evaluation:
     - "recip_rank"
     - "ndcg_cut_10"
     - "recall_100"
+    
+query_expansion:
+  method: "RM3"
+  fb_docs: 10
+  fb_terms: 10
+  original_query_weight: 0.6
