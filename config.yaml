@@ -1,11 +1,7 @@
-  # Standard MS MARCO passage benchmark: 6980 dev queries, all with qrels.
-  # 8.8M passage corpus, so the full collection is indexed regardless.
 dataset:
   name: "msmarco-passage/dev/small"
   index_path: "indexes/msmarco_passage"
 
-  # Retrieve a deep candidate pool (top-1000) for BM25 / RM3.
-  # The reranker only scores the top-100 of these
 retrieval:
   bm25_num_results: 1000
 
@@ -19,6 +15,13 @@ reranking:
   model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
   batch_size: 16
   rerank_top_k: 100
+
+demo:
+  pinned_query_ids:
+    - "299023"
+    - "841980"
+    - "679390"
+    - "119761"
 
 evaluation:
   num_queries: 1000

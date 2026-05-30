@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 import pyterrier as pt
 
-from src.data_loader import load_dataset, load_qrels
+from src.data_loader import load_dataset, load_qrels, clean_query
 from src.indexer import init_pyterrier
 from src.retriever import create_bm25, create_bm25_rm3, run_retrieval
 from src.reranker import CrossEncoderReranker
@@ -41,27 +41,45 @@ def load_qrels_cached(dataset_name):
 
 
 @st.cache_data
-def load_dev_queries_cached(dataset_name, max_queries=500):
+def load_dev_queries_cached(dataset_name, max_queries=500, pinned_query_ids=None):
+    pinned_query_ids = [str(q) for q in (pinned_query_ids or [])]
+    pinned_set = set(pinned_query_ids)
+
+    collected = {}
+    pinned_found = {}
+
     dataset = load_dataset(dataset_name)
 
-    dev_queries = []
     for query in dataset.queries_iter():
-        dev_queries.append({
-            "qid": query.query_id,
-            "query": query.text
-        })
+        qid = str(query.query_id)
+        row = {"qid": qid, "query": clean_query(query.text)}
 
-        if len(dev_queries) >= max_queries:
+        if qid in pinned_set:
+            pinned_found[qid] = row
+
+        if len(collected) < max_queries:
+            collected[qid] = row
+
+        if len(collected) >= max_queries and len(pinned_found) == len(pinned_set):
             break
 
-    return pd.DataFrame(dev_queries)
+    ordered = []
+    for qid in pinned_query_ids:
+        if qid in pinned_found:
+            ordered.append(pinned_found[qid])
+
+    for qid, row in collected.items():
+        if qid not in pinned_set:
+            ordered.append(row)
+
+    return pd.DataFrame(ordered)
 
 
 def make_query_df(query_text: str):
     return pd.DataFrame([
         {
             "qid": "demo_query",
-            "query": query_text
+            "query": clean_query(query_text)
         }
     ])
 
@@ -71,7 +89,7 @@ def get_relevant_set(qrels_df, qid):
     return set(filtered["docno"].astype(str))
 
 
-def compute_mrr_at_10(results, relevant_docnos):
+def compute_reciprocal_rank_at_10(results, relevant_docnos):
     top_results = results.sort_values("rank").head(10)
 
     for index, row in enumerate(top_results.itertuples(), start=1):
@@ -116,17 +134,17 @@ def display_results(
 
     results = results.sort_values("rank").head(top_k)
 
-    mrr_at_10 = compute_mrr_at_10(results, relevant_docnos)
+    rr_at_10 = compute_reciprocal_rank_at_10(results, relevant_docnos)
     rel_at_10 = compute_relevant_count_at_10(results, relevant_docnos)
 
     col_a, col_b = st.columns(2)
-    col_a.metric("MRR@10", f"{mrr_at_10:.3f}")
+    col_a.metric("Reciprocal Rank@10", f"{rr_at_10:.3f}")
     col_b.metric("Relevant@10", rel_at_10)
 
     for _, row in results.iterrows():
         rank = int(row["rank"]) + 1
         docno = str(row["docno"])
-        score = float(row["score"])
+        score = float(row.get("score", 0.0))
         text = row.get("text", "")
 
         is_relevant = docno in relevant_docnos
@@ -175,8 +193,8 @@ def main():
 
         - **BM25:** Lexical retrieval baseline.
         - **BM25 + RM3:** Expands the query using pseudo-relevance feedback.
-        - **BM25 + Reranker:** Reorders BM25 top candidates using a neural cross-encoder.
-        - **BM25 + RM3 + Reranker:** Applies query expansion first, then neural re-ranking.
+        - **BM25 + Reranker:** Reorders the top-100 BM25 candidates using a neural cross-encoder.
+        - **BM25 + RM3 + Reranker:** Applies query expansion first, then neural re-ranking of the top-100 candidates.
         """
     )
 
@@ -188,9 +206,13 @@ def main():
 
     fb_docs = config["query_expansion"]["fb_docs"]
     fb_terms = config["query_expansion"]["fb_terms"]
+    fb_lambda = config["query_expansion"]["original_query_weight"]
 
     model_name = config["reranking"]["model_name"]
     batch_size = config["reranking"]["batch_size"]
+    rerank_top_k = config["reranking"]["rerank_top_k"]
+
+    pinned_query_ids = config.get("demo", {}).get("pinned_query_ids", [])
 
     top_k = st.sidebar.slider("Number of results to show", 1, 20, 10)
 
@@ -227,19 +249,28 @@ def main():
         query_df = make_query_df(query_text)
 
         st.warning(
-            "Free text queries do not have qrels, so relevance labels and MRR@10 are not meaningful in this mode."
+            "Free text queries do not have qrels, so relevance labels and Reciprocal Rank@10 are not meaningful in this mode."
         )
 
     else:
-        dev_queries_df = load_dev_queries_cached(dataset_name, max_queries=500)
+        dev_queries_df = load_dev_queries_cached(
+            dataset_name,
+            max_queries=500,
+            pinned_query_ids=pinned_query_ids
+        )
+
+        pinned_set = {str(q) for q in pinned_query_ids}
+
+        def format_dev_query(i):
+            qid = str(dev_queries_df.loc[i, "qid"])
+            text = dev_queries_df.loc[i, "query"]
+            marker = "⭐ " if qid in pinned_set else ""
+            return f"{marker}{qid} | {text}"
 
         selected_row = st.selectbox(
-            "Select a development query",
+            "Select a development query (⭐ = recommended demo queries)",
             dev_queries_df.index,
-            format_func=lambda i: (
-                f"{dev_queries_df.loc[i, 'qid']} | "
-                f"{dev_queries_df.loc[i, 'query']}"
-            )
+            format_func=format_dev_query
         )
 
         selected_qid = str(dev_queries_df.loc[selected_row, "qid"])
@@ -272,7 +303,8 @@ def main():
         index=index,
         num_results=bm25_num_results,
         fb_docs=fb_docs,
-        fb_terms=fb_terms
+        fb_terms=fb_terms,
+        fb_lambda=fb_lambda
     )
 
     needs_reranker = pipeline_option in [
@@ -316,7 +348,9 @@ def main():
             bm25_rank_map = build_rank_map(bm25_results)
 
             with st.spinner("Running neural reranking..."):
-                reranked_results = reranker.rerank(bm25_results, query_df)
+                reranked_results = reranker.rerank(
+                    bm25_results, query_df, top_k=rerank_top_k
+                )
 
             display_results(
                 "BM25 + Neural Reranker Results",
@@ -327,23 +361,22 @@ def main():
             )
 
         elif pipeline_option == "BM25 + RM3 + Reranker":
-            with st.spinner("Running BM25 baseline for rank comparison..."):
-                bm25_results = run_retrieval(bm25, query_df)
-
-            bm25_rank_map = build_rank_map(bm25_results)
-
             with st.spinner("Running BM25 + RM3 retrieval..."):
                 rm3_results = run_retrieval(bm25_rm3, query_df)
 
+            rm3_rank_map = build_rank_map(rm3_results)
+
             with st.spinner("Running neural reranking..."):
-                full_results = reranker.rerank(rm3_results, query_df)
+                full_results = reranker.rerank(
+                    rm3_results, query_df, top_k=rerank_top_k
+                )
 
             display_results(
                 "BM25 + RM3 + Neural Reranker Results",
                 full_results,
                 top_k,
                 relevant_docnos=relevant_docnos,
-                baseline_rank_map=bm25_rank_map
+                baseline_rank_map=rm3_rank_map
             )
 
         elif pipeline_option == "Compare All":
@@ -354,12 +387,17 @@ def main():
                 rm3_results = run_retrieval(bm25_rm3, query_df)
 
             bm25_rank_map = build_rank_map(bm25_results)
+            rm3_rank_map = build_rank_map(rm3_results)
 
             with st.spinner("Running BM25 reranking..."):
-                bm25_reranked = reranker.rerank(bm25_results, query_df)
+                bm25_reranked = reranker.rerank(
+                    bm25_results, query_df, top_k=rerank_top_k
+                )
 
             with st.spinner("Running full pipeline reranking..."):
-                full_results = reranker.rerank(rm3_results, query_df)
+                full_results = reranker.rerank(
+                    rm3_results, query_df, top_k=rerank_top_k
+                )
 
             col1, col2 = st.columns(2)
 
@@ -393,7 +431,7 @@ def main():
                     full_results,
                     top_k,
                     relevant_docnos=relevant_docnos,
-                    baseline_rank_map=bm25_rank_map
+                    baseline_rank_map=rm3_rank_map
                 )
 
 
