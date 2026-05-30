@@ -12,13 +12,26 @@ class CrossEncoderReranker:
         self.batch_size = batch_size
         self.model = CrossEncoder(model_name)
 
-    def rerank(self, results: pd.DataFrame, queries: pd.DataFrame) -> pd.DataFrame:
+    def rerank(
+        self,
+        results: pd.DataFrame,
+        queries: pd.DataFrame,
+        top_k: int = 100
+    ) -> pd.DataFrame:
         query_map = dict(zip(queries["qid"].astype(str), queries["query"]))
+
+        candidates = (
+            results
+            .sort_values(["qid", "rank"])
+            .groupby("qid")
+            .head(top_k)
+            .reset_index(drop=True)
+        )
 
         rows = []
         pairs = []
 
-        for _, row in results.iterrows():
+        for _, row in candidates.iterrows():
             qid = str(row["qid"])
             query = query_map[qid]
             passage = row["text"]

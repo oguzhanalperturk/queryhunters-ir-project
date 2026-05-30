@@ -2,7 +2,7 @@ import os
 import shutil
 import pyterrier as pt
 
-from src.data_loader import iter_subset_documents_for_queries
+from src.data_loader import iter_documents
 
 
 def init_pyterrier():
@@ -26,9 +26,7 @@ def is_valid_index(index_path: str) -> bool:
 def build_index(
     dataset,
     index_path: str,
-    selected_queries,
-    qrels,
-    max_distractor_docs: int = 50000
+    text_meta_length: int = 2048
 ):
     init_pyterrier()
 
@@ -43,29 +41,28 @@ def build_index(
         print(f"Removing invalid/incomplete index: {index_path}")
         shutil.rmtree(index_path)
 
-    parent_dir = os.path.dirname(index_path)
-    os.makedirs(parent_dir, exist_ok=True)
+    os.makedirs(index_path, exist_ok=True)
 
     print(f"Creating new Terrier index at: {index_path}")
+    print(
+        "Indexing the FULL passage corpus (8.8M passages). "
+        "This is a one time step and may take a while; the corpus is "
+        "downloaded automatically by ir_datasets on first use."
+    )
 
-    terrier_index = pt.terrier.TerrierIndex(index_path)
-
-    indexer = terrier_index.indexer(
+    indexer = pt.IterDictIndexer(
+        index_path,
         meta={
             "docno": 64,
-            "text": 4096,
-        }
+            "text": text_meta_length,
+        },
+        text_attrs=["text"],
+        fields=True,
+        overwrite=True,
     )
 
-    indexer.index(
-        iter_subset_documents_for_queries(
-            dataset=dataset,
-            selected_queries=selected_queries,
-            qrels=qrels,
-            max_distractor_docs=max_distractor_docs
-        )
-    )
+    index_ref = indexer.index(iter_documents(dataset, max_docs=None))
 
     print("Index creation completed.")
 
-    return pt.IndexFactory.of(index_path)
+    return pt.IndexFactory.of(index_ref)
