@@ -1,9 +1,6 @@
 python-terrier
-ir-datasets
-pandas
-numpy
-pyyaml
-tqdm
 sentence-transformers
-torch
+ir_datasets
+pandas
+pyyaml
 streamlit
