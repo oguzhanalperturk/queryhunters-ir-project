@@ -19,9 +19,9 @@ reranking:
 demo:
   pinned_query_ids:
     - "299023"
-    - "841980"
-    - "679390"
-    - "119761"
+    - "112318"
+    - "2"
+
 
 evaluation:
   num_queries: 1000
