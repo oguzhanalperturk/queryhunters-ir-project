@@ -264,11 +264,11 @@ def main():
         def format_dev_query(i):
             qid = str(dev_queries_df.loc[i, "qid"])
             text = dev_queries_df.loc[i, "query"]
-            marker = "⭐ " if qid in pinned_set else ""
+            marker = ""
             return f"{marker}{qid} | {text}"
 
         selected_row = st.selectbox(
-            "Select a development query (⭐ = recommended demo queries)",
+            "Select a development query",
             dev_queries_df.index,
             format_func=format_dev_query
         )
